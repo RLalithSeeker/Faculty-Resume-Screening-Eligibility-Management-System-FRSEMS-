@@ -180,7 +180,13 @@ async def get_candidate(
     # Build response with nested data
     response = CandidateDetail.model_validate(candidate)
     response.resumes = [
-        {"id": r.id, "original_filename": r.original_filename, "stored_filename": r.stored_filename, "status": r.status.value}
+        {
+            "id": r.id,
+            "original_filename": r.original_filename,
+            "stored_filename": r.stored_filename,
+            "status": r.status.value,
+            "raw_text": r.raw_text,
+        }
         for r in candidate.resumes
     ]
     return response

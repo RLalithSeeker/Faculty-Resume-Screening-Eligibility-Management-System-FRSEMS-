@@ -22,6 +22,7 @@ from utils.file_safety import (
     compute_file_hash,
 )
 from utils.scanned_detector import is_scanned_document
+from services.rule_engine import evaluate_candidate
 
 router = APIRouter()
 
@@ -169,6 +170,13 @@ async def upload_resumes(
             # 14. Link resume to candidate
             resume.candidate_id = candidate.id
             resume.status = ResumeStatus.COMPLETED
+
+            # Smart Control: Auto-evaluate eligibility immediately
+            if candidate.eligibility_status == EligibilityStatus.PENDING:
+                try:
+                    await evaluate_candidate(candidate.id, db)
+                except Exception as eval_err:
+                    print(f"Auto-evaluation failed for candidate {candidate.id}: {str(eval_err)}")
 
             processed_resumes.append(resume)
 
