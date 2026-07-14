@@ -83,6 +83,16 @@ Go to **Candidates**:
 
 ---
 
+## 🛡️ Robustness & QA Resiliency Fixes
+
+To prepare this local version for institutional validation, we integrated key QA fixes:
+- **Transaction Savepoints (Nested Transactions)**: wraps each uploaded file's database operations (parsing, creation, evaluation) in an isolated `db.begin_nested()` block. If one file is corrupted or fails, it is rolled back without aborting the rest of the batch.
+- **Duplicate Ingestion Handling**: If a resume is uploaded for an email that already exists in the database, the system automatically merges and updates the existing profile's properties instead of throwing a database unique constraint integrity crash.
+- **Safe Enum Mapping**: Handled serialization anomalies where SQLite stores enums as raw strings by checking for the `.value` attribute dynamically, resolving manual override and rule evaluation crashes.
+- **Resilient File Magic Fallback**: Introduced filename signature matching for magic-byte checks so that uploading newly-created Word files (.docx) succeeds even if standard Windows `libmagic` databases are missing.
+
+---
+
 ## ⚡ Concurrency & Stress Testing
 We configured **WAL (Write-Ahead Logging)** mode on SQLite database connection in `backend/database.py` to allow concurrent async read operations.
 
@@ -96,6 +106,12 @@ Run stress tests:
 ```bash
 cd backend
 python tests/stress_test.py
+```
+
+Run end-to-end integration test:
+```bash
+cd backend
+python tests/simulate_workflow.py
 ```
 
 ---
@@ -128,6 +144,6 @@ vercel
 To push updates:
 ```bash
 git add .
-git commit -m "docs: Add mockup images, usage guide, and Vercel hosting instructions to README"
+git commit -m "docs: Add QA resiliency fixes and local integration test guide to README"
 git push origin master
 ```
