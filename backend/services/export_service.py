@@ -36,8 +36,8 @@ def _candidate_to_row(c: Candidate) -> list:
         c.current_designation or "",
         c.current_institution or "",
         c.total_experience_years or "",
-        c.phd_status.value if c.phd_status else "",
-        c.eligibility_status.value if c.eligibility_status else "",
+        c.phd_status.value if hasattr(c.phd_status, "value") else (c.phd_status or ""),
+        c.eligibility_status.value if hasattr(c.eligibility_status, "value") else (c.eligibility_status or ""),
         c.review_reason or "",
         c.created_at.isoformat() if c.created_at else "",
     ]

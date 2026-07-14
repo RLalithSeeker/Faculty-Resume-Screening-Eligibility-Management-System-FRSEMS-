@@ -2,6 +2,7 @@
 
 from datetime import datetime
 from pydantic import BaseModel
+from schemas.resume import ResumeResponse
 
 
 # --- Qualification ---
@@ -77,7 +78,7 @@ class CandidateListItem(BaseModel):
 class CandidateDetail(CandidateListItem):
     qualifications: list[QualificationResponse] = []
     experiences: list[ExperienceResponse] = []
-    resumes: list[dict] = []
+    resumes: list[ResumeResponse] = []
 
     model_config = {"from_attributes": True}
 

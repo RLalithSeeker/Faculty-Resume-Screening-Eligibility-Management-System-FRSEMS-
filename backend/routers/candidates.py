@@ -178,18 +178,7 @@ async def get_candidate(
         raise HTTPException(status_code=404, detail="Candidate not found")
 
     # Build response with nested data
-    response = CandidateDetail.model_validate(candidate)
-    response.resumes = [
-        {
-            "id": r.id,
-            "original_filename": r.original_filename,
-            "stored_filename": r.stored_filename,
-            "status": r.status.value,
-            "raw_text": r.raw_text,
-        }
-        for r in candidate.resumes
-    ]
-    return response
+    return CandidateDetail.model_validate(candidate)
 
 
 @router.patch("/{candidate_id}", response_model=CandidateDetail)
@@ -252,7 +241,7 @@ async def override_candidate_status(
     if not candidate:
         raise HTTPException(status_code=404, detail="Candidate not found")
 
-    old_status = candidate.eligibility_status.value if candidate.eligibility_status else None
+    old_status = candidate.eligibility_status.value if hasattr(candidate.eligibility_status, "value") else candidate.eligibility_status
 
     # Validate new status
     try:

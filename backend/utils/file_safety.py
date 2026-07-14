@@ -14,11 +14,25 @@ ALLOWED_MIME_TYPES = {
 }
 
 
-def validate_mime_type(file_content: bytes) -> str | None:
-    """Validate file MIME type via magic bytes. Returns MIME type or None if invalid."""
-    detected = magic.from_buffer(file_content, mime=True)
-    if detected in ALLOWED_MIME_TYPES:
-        return detected
+def validate_mime_type(file_content: bytes, filename: str | None = None) -> str | None:
+    """Validate file MIME type via magic bytes with extension fallback."""
+    try:
+        detected = magic.from_buffer(file_content, mime=True)
+        if detected in ALLOWED_MIME_TYPES:
+            return detected
+        if detected == "application/zip" and filename and filename.lower().endswith(".docx"):
+            return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    except Exception:
+        pass
+
+    # Signature checks + extension fallback
+    if filename:
+        fn = filename.lower()
+        if fn.endswith(".pdf") and file_content.startswith(b"%PDF"):
+            return "application/pdf"
+        if fn.endswith(".docx") and file_content.startswith(b"PK\x03\x04"):
+            return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
     return None
 
 

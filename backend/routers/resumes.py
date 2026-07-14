@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, Form
+from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
@@ -52,7 +53,7 @@ async def upload_resumes(
                 )
 
             # 2. Validate MIME type via magic bytes
-            mime_type = validate_mime_type(content)
+            mime_type = validate_mime_type(content, file.filename)
             if not mime_type:
                 raise HTTPException(
                     status_code=415,
@@ -81,113 +82,140 @@ async def upload_resumes(
             with open(file_path, "wb") as f:
                 f.write(content)
 
-            # 7. Create resume record
-            resume = Resume(
-                original_filename=safe_name,
-                stored_filename=stored_name,
-                file_hash=file_hash,
-                file_size=len(content),
-                mime_type=mime_type,
-                status=ResumeStatus.EXTRACTING_TEXT,
-                batch_name=batch_name,
-            )
-            db.add(resume)
-            await db.flush()
-
-            # 8. Extract text
             try:
-                text = extract_text(file_path, mime_type)
-                resume.raw_text = text
+                async with db.begin_nested():
+                    # 7. Create resume record
+                    resume = Resume(
+                        original_filename=safe_name,
+                        stored_filename=stored_name,
+                        file_hash=file_hash,
+                        file_size=len(content),
+                        mime_type=mime_type,
+                        status=ResumeStatus.EXTRACTING_TEXT,
+                        batch_name=batch_name,
+                    )
+                    db.add(resume)
+                    await db.flush()
+
+                    # 8. Extract text
+                    text = extract_text(file_path, mime_type)
+                    resume.raw_text = text
+
+                    # 9. Check if scanned
+                    if is_scanned_document(text, len(content)):
+                        resume.is_scanned = True
+
+                    # 10. Extract structured data
+                    resume.status = ResumeStatus.EXTRACTING_DATA
+                    extracted = extract_data(text)
+
+                    # 11. Create or retrieve candidate
+                    existing_candidate = None
+                    if extracted.email:
+                        stmt = select(Candidate).where(Candidate.email == extracted.email)
+                        c_res = await db.execute(stmt)
+                        existing_candidate = c_res.scalar_one_or_none()
+
+                    if existing_candidate:
+                        candidate = existing_candidate
+                        candidate.name = extracted.name or candidate.name
+                        candidate.phone = extracted.phone or candidate.phone
+                        candidate.current_designation = extracted.current_designation or candidate.current_designation
+                        candidate.current_institution = extracted.current_institution or candidate.current_institution
+                        candidate.total_experience_years = max(extracted.total_experience_years or 0, candidate.total_experience_years or 0)
+                        candidate.phd_status = extracted.phd_status
+                        
+                        # Purge old qualifications and experiences to replace with the newly uploaded ones
+                        await db.execute(delete(Qualification).where(Qualification.candidate_id == candidate.id))
+                        await db.execute(delete(Experience).where(Experience.candidate_id == candidate.id))
+                    else:
+                        candidate = Candidate(
+                            name=extracted.name or f"Unknown ({safe_name})",
+                            email=extracted.email,
+                            phone=extracted.phone,
+                            current_designation=extracted.current_designation,
+                            current_institution=extracted.current_institution,
+                            total_experience_years=extracted.total_experience_years,
+                            phd_status=extracted.phd_status,
+                        )
+                        db.add(candidate)
+
+                    # If scanned or has review reasons → manual review
+                    if resume.is_scanned:
+                        candidate.eligibility_status = EligibilityStatus.MANUAL_REVIEW
+                        candidate.review_reason = "Scanned document detected — text extraction unreliable"
+                    elif extracted.review_reasons:
+                        candidate.eligibility_status = EligibilityStatus.MANUAL_REVIEW
+                        candidate.review_reason = "; ".join(extracted.review_reasons)
+                    else:
+                        candidate.eligibility_status = EligibilityStatus.PENDING
+
+                    await db.flush()
+
+                    # 12. Create qualifications
+                    for qual in extracted.qualifications:
+                        # Normalize field
+                        field_normalized, is_allied = await normalize_field(qual.field_original, db)
+
+                        q = Qualification(
+                            candidate_id=candidate.id,
+                            level=qual.level,
+                            degree_original=qual.degree_original,
+                            degree_normalized=qual.degree_normalized,
+                            field_original=qual.field_original,
+                            field_normalized=field_normalized,
+                            institution=qual.institution,
+                            year_of_completion=qual.year_of_completion,
+                            is_allied=is_allied,
+                        )
+                        db.add(q)
+
+                    # 13. Create experiences
+                    for exp in extracted.experiences:
+                        e = Experience(
+                            candidate_id=candidate.id,
+                            designation=exp.designation,
+                            institution=exp.institution,
+                            start_year=exp.start_year,
+                            end_year=exp.end_year,
+                            is_teaching=exp.is_teaching,
+                        )
+                        db.add(e)
+
+                    # 14. Link resume to candidate
+                    resume.candidate_id = candidate.id
+                    resume.status = ResumeStatus.COMPLETED
+
+                    # Smart Control: Auto-evaluate eligibility immediately
+                    if candidate.eligibility_status == EligibilityStatus.PENDING:
+                        try:
+                            await evaluate_candidate(candidate.id, db)
+                        except Exception as eval_err:
+                            print(f"Auto-evaluation failed for candidate {candidate.id}: {str(eval_err)}")
+
+                    processed_resumes.append(resume)
+
             except Exception as e:
-                resume.status = ResumeStatus.FAILED
-                resume.error_message = f"Text extraction failed: {str(e)}"
-                processed_resumes.append(resume)
-                continue
-
-            # 9. Check if scanned
-            if is_scanned_document(text, len(content)):
-                resume.is_scanned = True
-                # Still try to create a candidate with what we have
-
-            # 10. Extract structured data
-            resume.status = ResumeStatus.EXTRACTING_DATA
-            extracted = extract_data(text)
-
-            # 11. Create candidate
-            candidate = Candidate(
-                name=extracted.name or f"Unknown ({safe_name})",
-                email=extracted.email,
-                phone=extracted.phone,
-                current_designation=extracted.current_designation,
-                current_institution=extracted.current_institution,
-                total_experience_years=extracted.total_experience_years,
-                phd_status=extracted.phd_status,
-            )
-
-            # If scanned or has review reasons → manual review
-            if resume.is_scanned:
-                candidate.eligibility_status = EligibilityStatus.MANUAL_REVIEW
-                candidate.review_reason = "Scanned document detected — text extraction unreliable"
-            elif extracted.review_reasons:
-                candidate.eligibility_status = EligibilityStatus.MANUAL_REVIEW
-                candidate.review_reason = "; ".join(extracted.review_reasons)
-            else:
-                candidate.eligibility_status = EligibilityStatus.PENDING
-
-            db.add(candidate)
-            await db.flush()
-
-            # 12. Create qualifications
-            for qual in extracted.qualifications:
-                # Normalize field
-                field_normalized, is_allied = await normalize_field(qual.field_original, db)
-
-                q = Qualification(
-                    candidate_id=candidate.id,
-                    level=qual.level,
-                    degree_original=qual.degree_original,
-                    degree_normalized=qual.degree_normalized,
-                    field_original=qual.field_original,
-                    field_normalized=field_normalized,
-                    institution=qual.institution,
-                    year_of_completion=qual.year_of_completion,
-                    is_allied=is_allied,
+                print(f"Failed to ingest resume {file.filename}: {str(e)}")
+                # Create failed resume entry in parent session
+                failed_resume = Resume(
+                    original_filename=safe_name,
+                    stored_filename=stored_name,
+                    file_hash=file_hash,
+                    file_size=len(content),
+                    mime_type=mime_type,
+                    status=ResumeStatus.FAILED,
+                    error_message=str(e),
+                    batch_name=batch_name,
                 )
-                db.add(q)
-
-            # 13. Create experiences
-            for exp in extracted.experiences:
-                e = Experience(
-                    candidate_id=candidate.id,
-                    designation=exp.designation,
-                    institution=exp.institution,
-                    start_year=exp.start_year,
-                    end_year=exp.end_year,
-                    is_teaching=exp.is_teaching,
-                )
-                db.add(e)
-
-            # 14. Link resume to candidate
-            resume.candidate_id = candidate.id
-            resume.status = ResumeStatus.COMPLETED
-
-            # Smart Control: Auto-evaluate eligibility immediately
-            if candidate.eligibility_status == EligibilityStatus.PENDING:
-                try:
-                    await evaluate_candidate(candidate.id, db)
-                except Exception as eval_err:
-                    print(f"Auto-evaluation failed for candidate {candidate.id}: {str(eval_err)}")
-
-            processed_resumes.append(resume)
+                db.add(failed_resume)
+                await db.flush()
+                processed_resumes.append(failed_resume)
 
         except HTTPException:
             raise
         except Exception as e:
-            # If we created a resume record, mark it as failed
-            if 'resume' in locals() and resume:
-                resume.status = ResumeStatus.FAILED
-                resume.error_message = str(e)
-                processed_resumes.append(resume)
+            print(f"General error processing file {file.filename}: {str(e)}")
 
     await db.flush()
 

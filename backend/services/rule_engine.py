@@ -37,7 +37,7 @@ def resolve_field(
     """Map a rule condition field key to the candidate's actual value."""
 
     if field_key == "phd_status":
-        return candidate.phd_status.value if candidate.phd_status else None
+        return candidate.phd_status.value if hasattr(candidate.phd_status, "value") else candidate.phd_status
     elif field_key == "experience_years":
         return candidate.total_experience_years
     elif field_key == "teaching_experience":
@@ -53,7 +53,7 @@ def resolve_field(
     for prefix, level_value in level_prefixes.items():
         if field_key.startswith(f"{prefix}_"):
             attr_name = field_key[len(prefix) + 1:]
-            qual = next((q for q in qualifications if q.level.value == level_value), None)
+            qual = next((q for q in qualifications if (q.level.value if hasattr(q.level, "value") else q.level) == level_value), None)
             if qual is None:
                 return None
 
@@ -161,7 +161,8 @@ async def evaluate_candidate(
             condition_traces.append(trace)
 
         # Combine using logic operator
-        if rule.logic_operator.value == "AND":
+        logic_op = rule.logic_operator.value if hasattr(rule.logic_operator, "value") else rule.logic_operator
+        if logic_op == "AND":
             overall_passed = all(ct["passed"] for ct in condition_traces) if condition_traces else True
         else:  # OR
             overall_passed = any(ct["passed"] for ct in condition_traces) if condition_traces else False
@@ -174,7 +175,7 @@ async def evaluate_candidate(
             "rule_id": rule.id,
             "rule_name": rule.name,
             "department": rule.department,
-            "logic_operator": rule.logic_operator.value,
+            "logic_operator": rule.logic_operator.value if hasattr(rule.logic_operator, "value") else rule.logic_operator,
             "overall_passed": overall_passed,
             "evaluated_at": datetime.now(timezone.utc).isoformat(),
             "conditions": condition_traces,

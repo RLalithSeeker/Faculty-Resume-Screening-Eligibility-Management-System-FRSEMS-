@@ -119,7 +119,7 @@ def run_simulation():
     print(f"Review Reason: {candidate['review_reason'] or 'None'}")
 
     assert candidate["eligibility_status"] == "eligible", "Simulation Failed: Candidate should be eligible"
-    print("\n🎉 SUCCESS: End-to-end workflow successfully completed and verified! Candidate is marked as ELIGIBLE automatically upon resume upload.")
+    print("\nSUCCESS: End-to-end workflow successfully completed and verified! Candidate is marked as ELIGIBLE automatically upon resume upload.")
 
     # Clean up
     if os.path.exists(cv_path):
