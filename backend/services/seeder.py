@@ -4,16 +4,16 @@ import uuid
 from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from database import async_session_factory
+from database import async_session
 from models.candidate import Candidate, EligibilityStatus, Qualification, Experience
-from models.rule import EligibilityRule, RuleCondition, LogicalOperator, ConditionOperator
+from models.rule import EligibilityRule, RuleCondition, LogicOperator, ConditionOperator
 from models.resume import Resume, ResumeStatus
 from models.specialization import Specialization, SpecializationAlias
 from services.rule_engine import evaluate_candidate
 
 async def seed_database_if_empty():
     """Seed initial specializations, rules, and candidates if empty."""
-    async with async_session_factory() as db:
+    async with async_session() as db:
         # Check if database is already seeded
         rules_check = await db.execute(select(EligibilityRule))
         if rules_check.scalars().first():
@@ -61,7 +61,7 @@ async def seed_database_if_empty():
             position="Assistant Professor",
             priority=1,
             is_active=True,
-            logic_operator=LogicalOperator.AND
+            logic_operator=LogicOperator.AND
         )
         db.add(rule1)
         await db.flush()
