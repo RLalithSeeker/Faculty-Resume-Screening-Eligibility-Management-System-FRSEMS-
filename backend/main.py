@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 
 from config import settings
 from database import init_db
+from services.seeder import seed_database_if_empty
 from routers import resumes, candidates, evaluation, rules, specializations, dashboard, export
 
 
@@ -17,6 +18,10 @@ from routers import resumes, candidates, evaluation, rules, specializations, das
 async def lifespan(app: FastAPI):
     """Startup/shutdown lifecycle."""
     await init_db()
+    try:
+        await seed_database_if_empty()
+    except Exception as e:
+        print(f"Error seeding database: {e}")
     yield
 
 
